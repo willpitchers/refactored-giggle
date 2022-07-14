@@ -1,0 +1,168 @@
+---
+title: "Interspecific Floral Morphology Variation among Iris Species"
+output: html_notebook
+---
+
+## To accompany the application from W. Pitchers for *#ecomodelling* position
+
+```{r setup, include=FALSE}
+if(!require( rmarkdown )){
+    install.packages( "rmarkdown" )
+    library( rmarkdown )
+}
+
+if(!require( knitr )){
+    install.packages( "knitr" )
+    library( knitr )
+}
+
+if(!require( tidyverse )){
+    install.packages( "tidyverse" )
+    library( tidyverse )
+}
+
+if(!require( data.table )){
+    install.packages( "data.table" )
+    library( data.table )
+}
+
+if(!require( car )){
+    install.packages("car")
+    library( car )
+}
+
+if(!require( MASS )){
+    install.packages( "MASS" )
+    library( MASS )
+}
+
+if(!require( cowplot )){
+    install.packages( "cowplot" )
+    library( cowplot )
+}
+
+if(!require( ggExtra )){
+    install.packages( "ggExtra" )
+    library( ggExtra )
+}
+
+```
+
+> This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook to document an analysis of the `iris` dataset that is packaged with the base installation of **R**. 
+
+Our dataframe contains 150 observations of Irises, each with values for a variable identifying `Species` (a factor), and four numeric measurements; the length and width of both petals and sepals.
+
+```{r load data}
+
+data( iris )
+
+iris %>% transmute( Species, Sepal.Length, Sepal.Width, Petal.Length, Petal.Width ) %>% data.table()
+
+```
+
+## Question 1: Do Species Differ?
+
+Since were dealing with 4 putatively independent numeric variables, a MANOVA would be an appropriate way to address this question. (Since we have a single predictor -- `Species` -- it should make no difference whether we use type II or type III sums of squares.)
+
+Here we can see that the matrix of all four measurements predicts species ID with a high degree of confidence;
+
+```{r manova}
+
+dep_vars <- with( iris, cbind( Sepal.Length, Sepal.Width, Petal.Length, Petal.Width ))
+
+mod <- lm( dep_vars ~ iris$Species )
+
+mod %>% Anova( test.statistic="Wilks" )
+
+```
+
+However, we ought to check that our data meets the MANOVA assumptions before we conclude...
+
+The MANOVA assumes multivariate normality. Since we have well \>20 observations for each species, central limit theorem tells us that we are probably safe to assume this. However, a look the correlation matrix (lower panel) shows that there is multicollinearity; `Petal.Length` is correlated with all 3 of the other measures, but *tightly* correlated with `Petal.Width`.
+
+```{r manova assumption}
+
+cor( dep_vars ) %>% round( 2 )
+
+```
+
+We can enforce remove this multicollinearity by using principal component rotation, giving us 4 "PC's" that are orthogonal to each other.
+
+```{r pca}
+
+pc_vars <- prcomp( dep_vars )$x
+
+iris_pca <- cbind( iris, pc_vars )
+
+cor( pc_vars ) %>% round( 2 )
+
+```
+
+Re-running the one-way MANOVA using the PC's in place of the raw measures reassures me that the multicollinearity is not problematic for the result;
+
+```{r pca manova}
+
+mod_pc <- lm( pc_vars ~ iris$Species )
+
+mod_pc%>% Anova( test.statistic="Wilks" )
+
+```
+
+## *How* do the Species Differ?
+
+In the first instance, I visualized the the spread of measurement values using violin plots. We can see that the differences are more marked among the petal measurements than those of the sepals. Note that the medians and interquartile ranges of each measure are quite displaced among species -- this suggests that univariate analyses of each measure would find significant differences. Given the correlation among variables however, it is more efficient to take a multivariate view.
+
+```{r violin plots, fig.keep='last'}
+
+v_sl <- iris %>% ggplot( aes( x=Species, y=Sepal.Length )) + 
+        geom_violin( aes( col=Species, fill=Species ), alpha=.5, show.legend=FALSE) + 
+        geom_boxplot(width=0.07 )
+v_sw <- iris %>% ggplot( aes( x=Species, y=Sepal.Width  )) + 
+        geom_violin( aes( col=Species, fill=Species ), alpha=.5, show.legend=FALSE) + 
+        geom_boxplot(width=0.07) + coord_flip()
+v_pl <- iris %>% ggplot( aes( x=Species, y=Petal.Length )) + 
+        geom_violin( aes( col=Species, fill=Species ), alpha=.5, show.legend=FALSE) + 
+        geom_boxplot(width=0.07)
+v_pw <- iris %>% ggplot( aes( x=Species, y=Petal.Width  )) + 
+        geom_violin( aes( col=Species, fill=Species ), alpha=.5, show.legend=FALSE) + 
+        geom_boxplot(width=0.07) + coord_flip()
+
+plot_grid( v_sl, v_sw, v_pl, v_pw )
+
+```
+
+From the Principal Components analysis above, PC1 represents 69% of the variation, and PC2 contains a further 17%. We can therefore visualize 86% of the variation in our floral morphology variables in one plot using the first 2 PC's.
+
+```{r pca eigenvalues}
+
+print( "Proportian of variance for PC's 1:4" )
+round( prcomp( dep_vars )$sdev / sum( prcomp( dep_vars )$sdev  ), 2 )
+
+```
+
+One this scatter-plot of PC1 vs. PC2, we can see that *Iris setosa* separates clearly from *I. versicolor* & *I. virginica* along PC1, with a less clear separation **between** *I. versicolor* and *I. virginica*. PC2 shows a similarly subtle separation between *I. versicolor* and *I. setosa* & *I. virginica*.
+
+```{r pca plot, fig.keep='last'}
+
+p <- iris_pca %>% ggplot( aes( x=PC1, y=PC2, col=Species )) + geom_point()
+p <- p + theme( legend.position="bottom" )
+p <- ggMarginal( p, type = "density", groupColour=TRUE, groupFill=TRUE )
+p
+
+```
+
+Looking at the PC loading matrix for our four variables, we can summarize their meaning as follows:
+
+ - PC1 is driven primarily by petal length, with lesser contributions of petal width and sepal length. 
+ - PC2 primarily represents sepal width and sepal length.
+
+
+```{r}
+
+prcomp( dep_vars )$rotation %>% round( 2 )
+
+```
+
+To summarize in the most simple form; *Iris setosa* is distinguished from its conspecifics mostly by its shorter petals, and *I. versicolor* differs from the other two species primarily in the shape of its sepals.
+
+
